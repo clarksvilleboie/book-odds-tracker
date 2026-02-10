@@ -23,15 +23,12 @@ st.markdown("""
 
 st.title("💰 전 세계 Top 15 배당 업체 비교")
 
-# 1. 보고 싶은 'VIP 업체' 리스트 (여기 있는 것만 나옵니다)
+# 1. VIP 업체 리스트
 VIP_BOOKIES = [
-    # 미국 메이저
-    'draftkings', 'fanduel', 'betmgm', 'caesars', 'bovada', 'betrivers',
-    # 유럽/영국 메이저
-    'bet365', 'williamhill', 'unibet', '888sport', 'betvictor', 
+    'draftkings', 'fanduel', 'betmgm', 'caesars', 'bovada', 'betrivers', # 미국
+    'bet365', 'williamhill', 'unibet', '888sport', 'betvictor', # 영국/유럽
     'ladbrokes', 'coral', 'betfair_ex_eu',
-    # 전세계 배당의 기준 (Sharp Bookie)
-    'pinnacle'
+    'pinnacle' # 기준점
 ]
 
 # 2. 리그 설정
@@ -63,7 +60,7 @@ def get_data(api_key, sport_key):
     url = f'https://api.the-odds-api.com/v4/sports/{sport_key}/odds'
     params = {
         'apiKey': api_key,
-        'regions': 'us,uk,eu', # 전 세계 다 긁어온 뒤 밑에서 필터링
+        'regions': 'us,uk,eu',
         'markets': 'h2h',
         'oddsFormat': 'decimal',
     }
@@ -72,11 +69,26 @@ def get_data(api_key, sport_key):
         return response.json()
     return None
 
-# 최고 배당 불꽃 마크
+# 최고 배당 불꽃 마크 함수
 def format_best_odds(val, max_val):
     if val == max_val:
         return f"🔥 {val:.2f}"
     return f"{val:.2f}"
+
+# 변동 화살표 계산 함수
+def calculate_change(current_val, unique_id):
+    history = st.session_state['history']
+    change_text = ""
+    
+    if unique_id in history:
+        diff = current_val - history[unique_id]
+        if diff > 0.001:
+            change_text = f"🔺{diff:.2f}"
+        elif diff < -0.001:
+            change_text = f"🔻{abs(diff):.2f}"
+    
+    history[unique_id] = current_val
+    return change_text
 
 # 메인 화면
 st.subheader(f"🏆 {selected_league_name} 매치업 (메이저 업체만 표시)")
@@ -98,7 +110,59 @@ if st.button('🔄 VIP 배당 데이터 불러오기', type="primary"):
                     
                     odds_list = []
                     
-                    # 배당 업체 반복문
+                    # [수정된 부분] 들여쓰기 오류 해결
                     for bookie in game['bookmakers']:
+                        if bookie['key'] not in VIP_BOOKIES:
+                            continue
+                            
+                        site_name = bookie['title']
+                        markets = bookie['markets']
                         
-                        # [핵심] VIP 리스트에 없으면 과감히 버림 (필터링)
+                        h2h = next((m for m in markets if m['key'] == 'h2h'), None)
+                        if h2h:
+                            outcomes = h2h['outcomes']
+                            h_odd = next((x['price'] for x in outcomes if x['name'] == home), 0)
+                            a_odd = next((x['price'] for x in outcomes if x['name'] == away), 0)
+                            draw_odd = next((x['price'] for x in outcomes if x['name'] == 'Draw'), 0)
+                            
+                            # 변동 계산
+                            h_chg = calculate_change(h_odd, f"{site_name}_{home}")
+                            a_chg = calculate_change(a_odd, f"{site_name}_{away}")
+                            d_chg = calculate_change(draw_odd, f"{site_name}_Draw_{home}")
+                            
+                            row = {
+                                '사이트': site_name,
+                                '홈_raw': h_odd,
+                                '원정_raw': a_odd,
+                                '무_raw': draw_odd,
+                                '변동(홈)': h_chg,
+                                '변동(원정)': a_chg,
+                                '변동(무)': d_chg
+                            }
+                            odds_list.append(row)
+                    
+                    if odds_list:
+                        df = pd.DataFrame(odds_list)
+                        
+                        max_home = df['홈_raw'].max()
+                        max_away = df['원정_raw'].max()
+                        max_draw = df['무_raw'].max() if '무_raw' in df.columns else 0
+                        
+                        df['홈 승 (Home)'] = df.apply(lambda x: f"{format_best_odds(x['홈_raw'], max_home)} {x['변동(홈)']}", axis=1)
+                        df['원정 승 (Away)'] = df.apply(lambda x: f"{format_best_odds(x['원정_raw'], max_away)} {x['변동(원정)']}", axis=1)
+                        
+                        if max_draw > 0:
+                            df['무승부 (Draw)'] = df.apply(lambda x: f"{format_best_odds(x['무_raw'], max_draw)} {x['변동(무)']}", axis=1)
+                            cols = ['사이트', '홈 승 (Home)', '무승부 (Draw)', '원정 승 (Away)']
+                        else:
+                            cols = ['사이트', '홈 승 (Home)', '원정 승 (Away)']
+                        
+                        st.dataframe(
+                            df[cols],
+                            use_container_width=True,
+                            hide_index=True
+                        )
+                    else:
+                        st.warning("선택하신 VIP 업체들의 배당이 아직 안 떴습니다.")
+        else:
+            st.error("데이터 통신 실패")
