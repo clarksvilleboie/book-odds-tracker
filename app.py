@@ -4,15 +4,35 @@ import pandas as pd
 from datetime import datetime
 
 # ==========================================
-# [필수] API 키 입력
-API_KEY = 'e2d960a84ee7d4f9fd5481eda30ac918'
+# [설정] 닉네임과 API 키를 적어주세요
+MY_NICKNAME = "Clarksville boy"  # <-- 여기에 본인 닉네임 입력!
+API_KEY = 'e2d960a84ee7d4f9fd5481eda30ac918' # <-- API 키 입력
 # ==========================================
 
-st.set_page_config(page_title="VIP 배당 분석기", layout="wide")
+st.set_page_config(page_title="Odds Tracker", layout="wide")
 
-# 스타일 설정
+# 🎨 [디자인] CSS로 꾸미기 (타이틀, 서명, 표 스타일)
 st.markdown("""
 <style>
+    /* 메인 타이틀 스타일 */
+    .main-title {
+        font-size: 3.5rem;
+        font-weight: 800;
+        color: #1E1E1E;
+        text-align: center;
+        margin-bottom: 0px;
+        text-shadow: 2px 2px 4px #cccccc;
+    }
+    /* 서브 타이틀 (닉네임) 스타일 */
+    .sub-title {
+        font-size: 1.2rem;
+        color: #555555;
+        text-align: center;
+        margin-top: -10px;
+        margin-bottom: 30px;
+        font-style: italic;
+    }
+    /* 표 스타일 조정 */
     .stDataFrame {font-size: 14px;}
     div[data-testid="stExpander"] details summary p {
         font-weight: bold;
@@ -21,7 +41,12 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("💰 전 세계 Top 15 배당 업체 비교")
+# 🏆 [화면 구성] 메인 타이틀 출력
+st.markdown('<p class="main-title">Sports Bookmaker Odds Tracker</p>', unsafe_allow_html=True)
+st.markdown(f'<p class="sub-title">Developed by {MY_NICKNAME}</p>', unsafe_allow_html=True)
+
+# 구분선
+st.markdown("---")
 
 # 1. VIP 업체 리스트
 VIP_BOOKIES = [
@@ -48,9 +73,13 @@ LEAGUES = {
     }
 }
 
-sport_type = st.sidebar.radio("종목 선택", list(LEAGUES.keys()))
-selected_league_name = st.sidebar.selectbox("리그 선택", list(LEAGUES[sport_type].keys()))
-sport_key = LEAGUES[sport_type][selected_league_name]
+# 사이드바 메뉴
+with st.sidebar:
+    st.header("🔍 필터 설정")
+    sport_type = st.radio("종목 선택", list(LEAGUES.keys()))
+    selected_league_name = st.selectbox("리그 선택", list(LEAGUES[sport_type].keys()))
+    sport_key = LEAGUES[sport_type][selected_league_name]
+    st.info(f"현재 선택: **{selected_league_name}**")
 
 # 세션 상태
 if 'history' not in st.session_state:
@@ -69,37 +98,35 @@ def get_data(api_key, sport_key):
         return response.json()
     return None
 
-# 최고 배당 불꽃 마크 함수
 def format_best_odds(val, max_val):
     if val == max_val:
         return f"🔥 {val:.2f}"
     return f"{val:.2f}"
 
-# 변동 화살표 계산 함수
 def calculate_change(current_val, unique_id):
     history = st.session_state['history']
     change_text = ""
-    
     if unique_id in history:
         diff = current_val - history[unique_id]
         if diff > 0.001:
             change_text = f"🔺{diff:.2f}"
         elif diff < -0.001:
             change_text = f"🔻{abs(diff):.2f}"
-    
     history[unique_id] = current_val
     return change_text
 
-# 메인 화면
-st.subheader(f"🏆 {selected_league_name} 매치업 (메이저 업체만 표시)")
+# 메인 기능 버튼
+col1, col2, col3 = st.columns([1, 2, 1]) # 버튼을 중앙에 예쁘게 배치하기 위함
+with col2:
+    refresh_btn = st.button('🔄 실시간 배당 데이터 가져오기 (Click)', type="primary", use_container_width=True)
 
-if st.button('🔄 VIP 배당 데이터 불러오기', type="primary"):
-    with st.spinner('전 세계 메이저 사이트(Bet365, Pinnacle 등) 조회 중...'):
+if refresh_btn:
+    with st.spinner(f'{selected_league_name} 데이터를 분석 중입니다...'):
         data = get_data(API_KEY, sport_key)
         
         if data:
-            now = datetime.now().strftime("%H시 %M분 %S초")
-            st.success(f"업데이트: {now} | 필터링: Global Top 15")
+            now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            st.success(f"✅ 업데이트 완료: {now} | Target: Global Top 15 Bookies")
             
             for game in data:
                 home = game['home_team']
@@ -107,18 +134,15 @@ if st.button('🔄 VIP 배당 데이터 불러오기', type="primary"):
                 start_time = game['commence_time'][:10]
                 
                 with st.expander(f"VS | {home} vs {away} ({start_time})", expanded=True):
-                    
                     odds_list = []
-                    
-                    # [수정된 부분] 들여쓰기 오류 해결
                     for bookie in game['bookmakers']:
                         if bookie['key'] not in VIP_BOOKIES:
                             continue
-                            
+                        
                         site_name = bookie['title']
                         markets = bookie['markets']
-                        
                         h2h = next((m for m in markets if m['key'] == 'h2h'), None)
+                        
                         if h2h:
                             outcomes = h2h['outcomes']
                             h_odd = next((x['price'] for x in outcomes if x['name'] == home), 0)
@@ -143,26 +167,8 @@ if st.button('🔄 VIP 배당 데이터 불러오기', type="primary"):
                     
                     if odds_list:
                         df = pd.DataFrame(odds_list)
-                        
                         max_home = df['홈_raw'].max()
                         max_away = df['원정_raw'].max()
                         max_draw = df['무_raw'].max() if '무_raw' in df.columns else 0
                         
-                        df['홈 승 (Home)'] = df.apply(lambda x: f"{format_best_odds(x['홈_raw'], max_home)} {x['변동(홈)']}", axis=1)
-                        df['원정 승 (Away)'] = df.apply(lambda x: f"{format_best_odds(x['원정_raw'], max_away)} {x['변동(원정)']}", axis=1)
-                        
-                        if max_draw > 0:
-                            df['무승부 (Draw)'] = df.apply(lambda x: f"{format_best_odds(x['무_raw'], max_draw)} {x['변동(무)']}", axis=1)
-                            cols = ['사이트', '홈 승 (Home)', '무승부 (Draw)', '원정 승 (Away)']
-                        else:
-                            cols = ['사이트', '홈 승 (Home)', '원정 승 (Away)']
-                        
-                        st.dataframe(
-                            df[cols],
-                            use_container_width=True,
-                            hide_index=True
-                        )
-                    else:
-                        st.warning("선택하신 VIP 업체들의 배당이 아직 안 떴습니다.")
-        else:
-            st.error("데이터 통신 실패")
+                        df['홈 승
