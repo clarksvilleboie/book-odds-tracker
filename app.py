@@ -5,16 +5,15 @@ from datetime import datetime
 
 # ==========================================
 # [설정] 닉네임과 API 키를 적어주세요
-MY_NICKNAME = "Clarksville boy"  # <-- 여기에 본인 닉네임 입력!
-API_KEY = 'e2d960a84ee7d4f9fd5481eda30ac918' # <-- API 키 입력
+MY_NICKNAME = "Clarksville korean" 
+API_KEY = 'e2d960a84ee7d4f9fd5481eda30ac918' 
 # ==========================================
 
 st.set_page_config(page_title="Odds Tracker", layout="wide")
 
-# 🎨 [디자인] CSS로 꾸미기 (타이틀, 서명, 표 스타일)
+# 디자인 설정
 st.markdown("""
 <style>
-    /* 메인 타이틀 스타일 */
     .main-title {
         font-size: 3.5rem;
         font-weight: 800;
@@ -23,7 +22,6 @@ st.markdown("""
         margin-bottom: 0px;
         text-shadow: 2px 2px 4px #cccccc;
     }
-    /* 서브 타이틀 (닉네임) 스타일 */
     .sub-title {
         font-size: 1.2rem;
         color: #555555;
@@ -32,7 +30,6 @@ st.markdown("""
         margin-bottom: 30px;
         font-style: italic;
     }
-    /* 표 스타일 조정 */
     .stDataFrame {font-size: 14px;}
     div[data-testid="stExpander"] details summary p {
         font-weight: bold;
@@ -41,22 +38,19 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# 🏆 [화면 구성] 메인 타이틀 출력
+# 타이틀 출력
 st.markdown('<p class="main-title">Sports Bookmaker Odds Tracker</p>', unsafe_allow_html=True)
 st.markdown(f'<p class="sub-title">Developed by {MY_NICKNAME}</p>', unsafe_allow_html=True)
-
-# 구분선
 st.markdown("---")
 
-# 1. VIP 업체 리스트
+# VIP 업체 리스트
 VIP_BOOKIES = [
-    'draftkings', 'fanduel', 'betmgm', 'caesars', 'bovada', 'betrivers', # 미국
-    'bet365', 'williamhill', 'unibet', '888sport', 'betvictor', # 영국/유럽
-    'ladbrokes', 'coral', 'betfair_ex_eu',
-    'pinnacle' # 기준점
+    'draftkings', 'fanduel', 'betmgm', 'caesars', 'bovada', 'betrivers',
+    'bet365', 'williamhill', 'unibet', '888sport', 'betvictor', 
+    'ladbrokes', 'coral', 'betfair_ex_eu', 'pinnacle'
 ]
 
-# 2. 리그 설정
+# 리그 설정
 LEAGUES = {
     "축구 (Soccer)": {
         "EPL (영국)": "soccer_epl",
@@ -73,7 +67,7 @@ LEAGUES = {
     }
 }
 
-# 사이드바 메뉴
+# 사이드바
 with st.sidebar:
     st.header("🔍 필터 설정")
     sport_type = st.radio("종목 선택", list(LEAGUES.keys()))
@@ -115,8 +109,8 @@ def calculate_change(current_val, unique_id):
     history[unique_id] = current_val
     return change_text
 
-# 메인 기능 버튼
-col1, col2, col3 = st.columns([1, 2, 1]) # 버튼을 중앙에 예쁘게 배치하기 위함
+# 메인 버튼
+col1, col2, col3 = st.columns([1, 2, 1])
 with col2:
     refresh_btn = st.button('🔄 실시간 배당 데이터 가져오기 (Click)', type="primary", use_container_width=True)
 
@@ -171,4 +165,27 @@ if refresh_btn:
                         max_away = df['원정_raw'].max()
                         max_draw = df['무_raw'].max() if '무_raw' in df.columns else 0
                         
-                        df['홈 승
+                        # [수정] 긴 코드를 안전하게 끊어서 작성했습니다
+                        df['홈 승 (Home)'] = df.apply(
+                            lambda x: f"{format_best_odds(x['홈_raw'], max_home)} {x['변동(홈)']}", 
+                            axis=1
+                        )
+                        df['원정 승 (Away)'] = df.apply(
+                            lambda x: f"{format_best_odds(x['원정_raw'], max_away)} {x['변동(원정)']}", 
+                            axis=1
+                        )
+                        
+                        if max_draw > 0:
+                            df['무승부 (Draw)'] = df.apply(
+                                lambda x: f"{format_best_odds(x['무_raw'], max_draw)} {x['변동(무)']}", 
+                                axis=1
+                            )
+                            cols = ['사이트', '홈 승 (Home)', '무승부 (Draw)', '원정 승 (Away)']
+                        else:
+                            cols = ['사이트', '홈 승 (Home)', '원정 승 (Away)']
+                            
+                        st.dataframe(df[cols], use_container_width=True, hide_index=True)
+                    else:
+                        st.warning("배당 데이터가 없습니다.")
+        else:
+            st.error("데이터 통신 실패 (API 키 확인 필요)")
