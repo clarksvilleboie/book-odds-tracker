@@ -1,165 +1,143 @@
 import streamlit as st
 import requests
+import pandas as pd
 from datetime import datetime
 
-# ======================
-# 설정
-# ======================
+# ==========================================
+# [설정] 닉네임과 API 키
 MY_NICKNAME = "jun lee"
-API_KEY = "e2d960a84ee7d4f9fd5481eda30ac918"
+API_KEY = 'e2d960a84ee7d4f9fd5481eda30ac918'
+# ==========================================
 
-st.set_page_config(page_title="Oddsportal Pro", layout="wide")
+st.set_page_config(page_title="EPL Odds Flow Pro", layout="wide")
 
-# ======================
-# 팀 로고 (EPL)
-# ======================
-TEAM_LOGOS_EPL = {
-    "Arsenal": "https://upload.wikimedia.org/wikipedia/en/5/53/Arsenal_FC.svg",
-    "Aston Villa": "https://upload.wikimedia.org/wikipedia/en/9/9a/Aston_Villa_FC_logo.svg",
-    "Bournemouth": "https://upload.wikimedia.org/wikipedia/en/e/e5/AFC_Bournemouth_%282013%29.svg",
-    "Brentford": "https://upload.wikimedia.org/wikipedia/en/2/2a/Brentford_FC_crest.svg",
-    "Brighton and Hove Albion": "https://upload.wikimedia.org/wikipedia/en/f/fd/Brighton_%26_Hove_Albion_logo.svg",
-    "Chelsea": "https://upload.wikimedia.org/wikipedia/en/c/cc/Chelsea_FC.svg",
-    "Everton": "https://upload.wikimedia.org/wikipedia/en/7/7c/Everton_FC_logo.svg",
-    "Leeds United": "https://upload.wikimedia.org/wikipedia/en/5/54/Leeds_United_F.C._logo.svg",
-    "Manchester United": "https://upload.wikimedia.org/wikipedia/en/7/7a/Manchester_United_FC_crest.svg",
-    "Manchester City": "https://upload.wikimedia.org/wikipedia/en/e/eb/Manchester_City_FC_badge.svg",
-    "Newcastle United": "https://upload.wikimedia.org/wikipedia/en/5/56/Newcastle_United_Logo.svg",
-    "Tottenham Hotspur": "https://upload.wikimedia.org/wikipedia/en/b/b4/Tottenham_Hotspur.svg",
-    "West Ham United": "https://upload.wikimedia.org/wikipedia/en/c/c2/West_Ham_United_FC_logo.svg",
-}
-
-def get_team_logo(team):
-    return TEAM_LOGOS_EPL.get(
-        team,
-        "https://upload.wikimedia.org/wikipedia/commons/a/ac/No_image_available.svg"
-    )
-
-# ======================
-# CSS
-# ======================
+# 🎨 [디자인] Behance 시안 느낌의 프리미엄 다크 테마
 st.markdown("""
 <style>
-.main { background-color: #ffffff; color: #333333; }
-.header-box {
-    background-color: #2c3e50; color: white; padding: 20px;
-    text-align: center; border-radius: 0 0 15px 15px; margin-bottom: 25px;
-}
-.table-header {
-    background-color: #f1f3f5; border-top: 2px solid #34495e;
-    border-bottom: 1px solid #dee2e6; font-weight: bold;
-    padding: 12px; font-size: 0.85rem; color: #495057;
-}
-.match-row {
-    border-bottom: 1px solid #f0f0f0; padding: 15px 0;
-    display: flex; align-items: center; justify-content: space-between;
-}
-.team-section {
-    display: flex; align-items: center; width: 45%;
-    font-weight: 500; font-size: 0.95rem;
-}
-.team-logo {
-    width: 24px; height: 24px; margin: 0 8px;
-    object-fit: contain;
-}
-.odd-box {
-    border: 1px solid #e9ecef; border-radius: 3px;
-    padding: 6px 0; text-align: center; width: 65px;
-    font-weight: 600; font-size: 0.9rem; background-color: #fcfcfc;
-}
-.best-odd {
-    background-color: #fff9c4 !important;
-    border-color: #fbc02d !important;
-}
+    .main { background-color: #0F172A; color: #F8FAFC; }
+    .header-box {
+        background: linear-gradient(135deg, #1E293B 0%, #0F172A 100%);
+        padding: 30px; text-align: center; border-radius: 20px;
+        border: 1px solid #334155; margin-bottom: 30px;
+        box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+    }
+    .main-title {
+        font-size: 2.5rem; font-weight: 800; margin-bottom: 10px;
+        background: linear-gradient(90deg, #38BDF8, #818CF8);
+        -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    }
+    .table-header {
+        background-color: #1E293B; border-radius: 10px;
+        padding: 15px; font-weight: 700; color: #94A3B8;
+        font-size: 0.85rem; margin-bottom: 10px; border: 1px solid #334155;
+    }
+    .match-row {
+        background-color: #1E293B; border-radius: 12px; padding: 15px;
+        margin-bottom: 12px; border: 1px solid #334155;
+        display: flex; align-items: center; transition: 0.3s;
+    }
+    .match-row:hover { border-color: #38BDF8; transform: translateY(-2px); }
+    .team-logo { width: 28px; height: 28px; object-fit: contain; }
+    .odd-box {
+        background-color: #0F172A; border: 1px solid #334155;
+        border-radius: 8px; padding: 10px 0; width: 70px;
+        text-align: center; font-weight: 700; color: #38BDF8;
+    }
+    .best-odd {
+        background: linear-gradient(135deg, #FACC15 0%, #EAB308 100%);
+        color: #0F172A !important; border: none;
+    }
+    .stButton>button {
+        background: linear-gradient(90deg, #38BDF8, #818CF8);
+        color: white; border: none; border-radius: 12px;
+        padding: 15px; font-weight: 700; width: 100%; transition: 0.3s;
+    }
 </style>
 """, unsafe_allow_html=True)
 
-# ======================
-# Header
-# ======================
-st.markdown(
-    f'<div class="header-box"><h1>Oddsportal Pro</h1><p>Developed by {MY_NICKNAME}</p></div>',
-    unsafe_allow_html=True
-)
+# 🖼️ [로고 매핑] 보내주신 리스트 + 현재 EPL 팀 고해상도 매핑
+EPL_LOGOS = {
+    "Arsenal": "359", "Manchester City": "382", "Aston Villa": "362", 
+    "Chelsea": "363", "Manchester United": "360", "Liverpool": "364",
+    "Brentford": "337", "Everton": "368", "Bournemouth": "349",
+    "Newcastle United": "361", "Fulham": "370", "Crystal Palace": "384",
+    "Brighton and Hove Albion": "331", "Tottenham Hotspur": "367", 
+    "Nottingham Forest": "393", "West Ham United": "371", "Wolverhampton Wanderers": "380",
+    "Leicester City": "375", "Southampton": "376", "Ipswich Town": "374"
+}
 
-# ======================
-# Sidebar
-# ======================
+def get_logo_url(team_name):
+    # 팀 이름이 포함된 ID 찾기 (예: 'Man Utd' -> 'Manchester United')
+    for name, id in EPL_LOGOS.items():
+        if name in team_name or team_name in name:
+            return f"https://a.espncdn.com/i/teamlogos/soccer/500/{id}.png"
+    return "https://a.espncdn.com/i/teamlogos/soccer/500/default-team-logo.png"
+
+# 메인 헤더
+st.markdown(f"""
+<div class="header-box">
+    <div class="main-title">EPL ODDS FLOW PRO</div>
+    <div style="color: #94A3B8;">Premium Market Analysis for {MY_NICKNAME}</div>
+</div>
+""", unsafe_allow_html=True)
+
+# 사이드바 (깔끔하게 정리)
 with st.sidebar:
-    st.header("🏆 League")
-    sport_key = st.selectbox("Select", ["soccer_epl"])
+    st.image("https://upload.wikimedia.org/wikipedia/en/f/f2/Premier_League_Logo.svg", width=150)
+    st.divider()
+    st.caption("현재 1부 리그 20개 팀 데이터를 실시간으로 추적합니다.")
 
-VIP_BOOKIES = ['draftkings', 'fanduel', 'betmgm', 'caesars', 'bet365', 'pinnacle']
-
-# ======================
-# Main
-# ======================
-if st.button("🔄 Update Real-time Odds", type="primary", use_container_width=True):
-
-    url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds"
-    params = {
-        "apiKey": API_KEY,
-        "regions": "us,uk,eu",
-        "markets": "h2h",
-        "oddsFormat": "decimal"
-    }
-
+# 데이터 호출 및 출력
+if st.button('🔄 실시간 배당 데이터 동기화'):
+    url = f'https://api.the-odds-api.com/v4/sports/soccer_epl/odds'
+    params = {'apiKey': API_KEY, 'regions': 'us,uk,eu', 'markets': 'h2h', 'oddsFormat': 'decimal'}
     res = requests.get(url, params=params)
-
-    if res.status_code != 200:
-        st.error("데이터 불러오기 실패")
-    else:
+    
+    if res.status_code == 200:
         data = res.json()
-
+        
+        # 오즈포털 스타일 헤더
         st.markdown("""
         <div class="table-header">
-            <div style="display:flex; justify-content:space-between;">
-                <div style="width:10%; text-align:center;">Time</div>
-                <div style="width:45%;">Match</div>
-                <div style="width:15%; text-align:center;">1</div>
-                <div style="width:15%; text-align:center;">X</div>
-                <div style="width:15%; text-align:center;">2</div>
+            <div style="display: flex; justify-content: space-between; text-align: center;">
+                <div style="width: 10%;">TIME</div>
+                <div style="width: 45%; text-align: left;">PREMIER LEAGUE MATCH</div>
+                <div style="width: 15%;">1</div><div style="width: 15%;">X</div><div style="width: 15%;">2</div>
             </div>
         </div>
         """, unsafe_allow_html=True)
 
         for game in data:
-            home = game["home_team"]
-            away = game["away_team"]
-            start_time = game["commence_time"][11:16]
+            home, away = game['home_team'], game['away_team']
+            time = game['commence_time'][11:16]
+            
+            # 최고 배당 계산
+            b_h, b_d, b_a = 0, 0, 0
+            for b in game['bookmakers']:
+                h2h = next((m for m in b['markets'] if m['key'] == 'h2h'), None)
+                if h2h:
+                    h = next((x['price'] for x in h2h['outcomes'] if x['name'] == home), 0)
+                    a = next((x['price'] for x in h2h['outcomes'] if x['name'] == away), 0)
+                    d = next((x['price'] for x in h2h['outcomes'] if x['name'] == 'Draw'), 0)
+                    b_h, b_d, b_a = max(b_h, h), max(b_d, d), max(best_a := b_a, a)
 
-            best_h = best_d = best_a = 0
-
-            for b in game["bookmakers"]:
-                if b["key"] in VIP_BOOKIES:
-                    m = next((m for m in b["markets"] if m["key"] == "h2h"), None)
-                    if m:
-                        for o in m["outcomes"]:
-                            if o["name"] == home:
-                                best_h = max(best_h, o["price"])
-                            elif o["name"] == away:
-                                best_a = max(best_a, o["price"])
-                            elif o["name"] == "Draw":
-                                best_d = max(best_d, o["price"])
-
-            h_val = f"{best_h:.2f}" if best_h else "-"
-            d_val = f"{best_d:.2f}" if best_d else "-"
-            a_val = f"{best_a:.2f}" if best_a else "-"
-
-            h_cls = "best-odd" if best_h else ""
-            d_cls = "best-odd" if best_d else ""
-            a_cls = "best-odd" if best_a else ""
-
+            # 출력 데이터 가공
+            h_logo, a_logo = get_logo_url(home), get_logo_url(away)
+            
             st.markdown(f"""
             <div class="match-row">
-                <div style="width:10%; text-align:center; color:#999;">{start_time}</div>
-                <div class="team-section">
-                    <img src="{get_team_logo(home)}" class="team-logo">
-                    {home} vs {away}
-                    <img src="{get_team_logo(away)}" class="team-logo">
+                <div style="width: 10%; color: #64748B; font-weight: 600; text-align: center;">{time}</div>
+                <div style="width: 45%; display: flex; align-items: center; gap: 10px;">
+                    <img src="{h_logo}" class="team-logo">
+                    <span style="font-size: 0.9rem;">{home}</span>
+                    <span style="color: #475569; font-size: 0.7rem;">VS</span>
+                    <span style="font-size: 0.9rem;">{away}</span>
+                    <img src="{a_logo}" class="team-logo">
                 </div>
-                <div style="width:15%; text-align:center;"><span class="odd-box {h_cls}">{h_val}</span></div>
-                <div style="width:15%; text-align:center;"><span class="odd-box {d_cls}">{d_val}</span></div>
-                <div style="width:15%; text-align:center;"><span class="odd-box {a_cls}">{a_val}</span></div>
+                <div style="width: 15%; text-align: center;"><div class="odd-box best-odd">{b_h:.2f}</div></div>
+                <div style="width: 15%; text-align: center;"><div class="odd-box">{b_d:.2f}</div></div>
+                <div style="width: 15%; text-align: center;"><div class="odd-box">{b_a:.2f}</div></div>
             </div>
             """, unsafe_allow_html=True)
+    else:
+        st.error("API 연동 실패. 키를 확인하세요.")
