@@ -4,7 +4,6 @@ from datetime import datetime, timezone
 from typing import Dict, Any, Optional, List, Tuple
 
 import httpx
-import pandas as pd
 import streamlit as st
 from streamlit_autorefresh import st_autorefresh
 
@@ -23,18 +22,18 @@ if not ODDS_API_KEY:
 SPORT_KEY = "soccer_epl"
 ODDS_URL = f"https://api.the-odds-api.com/v4/sports/{SPORT_KEY}/odds"
 
-# ✅ 시장
+# 시장
 REGIONS = "uk,eu"
 ODDS_FORMAT = "decimal"
 MARKETS = "h2h,totals"  # 1X2 + totals(O/U)
 
-# ✅ 10개 업체 (응답에 있는 것만 표시됨)
+# 10개 업체 후보 (응답에 있는 것만 표시됨)
 TOP10_BOOKMAKERS = [
     "bet365", "pinnacle", "williamhill", "unibet", "ladbrokes",
     "paddypower", "betfair", "betvictor", "1xbet", "betsson"
 ]
 
-# ✅ 팀 필터(실제 데이터에서 자동 추출도 가능하지만, MVP는 고정 리스트)
+# 팀 필터(필터 UI용)
 EPL_TEAMS_20 = [
     "Arsenal",
     "Manchester City",
@@ -60,7 +59,29 @@ EPL_TEAMS_20 = [
 
 
 # =========================
-# 1) 유틸
+# 1) CSS (화살표 색 + 표 스타일)
+# =========================
+st.markdown("""
+<style>
+.up { color:#ef4444; font-weight:800; }      /* 빨강 ▲ */
+.down { color:#38bdf8; font-weight:800; }    /* 파랑 ▼ */
+.flat { color:#94a3b8; font-weight:700; }    /* 회색 — */
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+
+.tblwrap { border:1px solid rgba(148,163,184,0.20); border-radius:14px; overflow-x:auto; background: rgba(15,23,42,0.55); }
+.tbl { width:100%; min-width:720px; border-collapse:collapse; }
+.tbl th, .tbl td { padding:9px 10px; border-bottom:1px solid rgba(148,163,184,0.18); }
+.tbl th { text-align:left; color:#cbd5e1; font-size:13px; background: rgba(2,6,23,0.55); }
+.tbl td { font-size:14px; }
+.r { text-align:right; white-space:nowrap; }
+.kick { color:#94a3b8; font-size:12px; }
+.hr { height:1px; background: rgba(148,163,184,0.18); margin: 14px 0; }
+</style>
+""", unsafe_allow_html=True)
+
+
+# =========================
+# 2) 유틸
 # =========================
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -81,13 +102,6 @@ def direction(prev: Optional[float], curr: Optional[float]) -> Tuple[Optional[fl
         return prev, 0.0, "UNCHANGED"
     return prev, d, "UP" if d > 0 else "DOWN"
 
-def arrow(dirn: Optional[str]) -> str:
-    if dirn == "UP":
-        return "▲"
-    if dirn == "DOWN":
-        return "▼"
-    return "—"
-
 def fmt_time(iso: str) -> str:
     if not iso:
         return "-"
@@ -99,7 +113,7 @@ def fmt_time(iso: str) -> str:
 
 
 # =========================
-# 2) API 호출 (1분 캐시 = “1분 업데이트”)
+# 3) API 호출 (1분 캐시 = 1분 업데이트)
 # =========================
 @st.cache_data(ttl=60, show_spinner=False)
 def fetch_odds_cached() -> Dict[str, Any]:
@@ -119,7 +133,7 @@ def fetch_odds_cached() -> Dict[str, Any]:
 
 
 # =========================
-# 3) 정규화 (UI용 구조 만들기)
+# 4) 정규화
 # =========================
 def normalize_h2h(home: str, away: str, outcomes: list) -> Dict[str, float]:
     # HOME / DRAW / AWAY
@@ -136,7 +150,7 @@ def normalize_h2h(home: str, away: str, outcomes: list) -> Dict[str, float]:
     return m
 
 def normalize_totals_2_5(outcomes: list) -> Dict[str, float]:
-    # totals 중 point==2.5 만: OVER_2_5 / UNDER_2_5
+    # totals 중 point==2.5만: OVER_2_5 / UNDER_2_5
     m = {}
     for o in outcomes:
         point = safe_float(o.get("point"))
@@ -150,7 +164,7 @@ def normalize_totals_2_5(outcomes: list) -> Dict[str, float]:
             m["UNDER_2_5"] = price
     return m
 
-def normalize_events(raw_events: list) -> Dict[str, Any]:
+def normalize_events(raw_events: list, show_all_bookmakers: bool) -> Dict[str, Any]:
     events = {}
 
     for ev in raw_events:
@@ -169,8 +183,9 @@ def normalize_events(raw_events: list) -> Dict[str, Any]:
 
         for bm in ev.get("bookmakers", []):
             bm_key = bm.get("key")
-            # top10만(원하면 이 필터 꺼도 됨)
-            if bm_key not in TOP10_BOOKMAKERS:
+
+            # ✅ Top10 필터
+            if (not show_all_bookmakers) and (bm_key not in TOP10_BOOKMAKERS):
                 continue
 
             bm_title = bm.get("title") or bm_key
@@ -236,42 +251,92 @@ def compute_delta(curr_events: Dict[str, Any], prev_events: Dict[str, Any]) -> D
 
 
 # =========================
-# 4) UI
+# 5) HTML 테이블 렌더 (색 + Δ 표시)
+# =========================
+def fmt_cell(o: dict) -> str:
+    if not o or o.get("price") is None:
+        return "<span class='flat'>-</span>"
+
+    price = float(o["price"])
+    dirn = o.get("direction")
+    d = o.get("delta")
+
+    if dirn == "UP":
+        a = "<span class='up'>▲</span>"
+    elif dirn == "DOWN":
+        a = "<span class='down'>▼</span>"
+    elif dirn == "UNCHANGED":
+        a = "<span class='flat'>—</span>"
+    else:
+        a = "<span class='flat'>—</span>"
+
+    if d is None:
+        delta_txt = "<span class='flat'>(Δ -)</span>"
+    else:
+        # 변화량 표시 (+/-)
+        delta_txt = f"<span class='mono flat'>(Δ {d:+.3f})</span>"
+
+    return f"<span class='mono'>{price:.3f}</span> {a} {delta_txt}"
+
+def render_market_table_html(market: Dict[str, Any], cols: List[Tuple[str, str]]) -> str:
+    bms = list(market.values())
+    if not bms:
+        return "<div class='flat'>데이터 없음</div>"
+
+    bms.sort(key=lambda x: (x.get("title") or "").lower())
+
+    ths = "<th>Bookmaker</th>" + "".join([f"<th class='r'>{label}</th>" for _, label in cols])
+    rows = []
+
+    for bm in bms:
+        title = bm.get("title") or bm.get("bookmaker_key")
+        outcomes = bm.get("outcomes") or {}
+
+        tds = [f"<td>{title}</td>"]
+        for k, _label in cols:
+            tds.append(f"<td class='r'>{fmt_cell(outcomes.get(k))}</td>")
+
+        rows.append("<tr>" + "".join(tds) + "</tr>")
+
+    return f"""
+    <div class="tblwrap">
+      <table class="tbl">
+        <thead><tr>{ths}</tr></thead>
+        <tbody>{''.join(rows)}</tbody>
+      </table>
+    </div>
+    """
+
+
+# =========================
+# 6) UI
 # =========================
 st.title("EPL Odds Tracker")
-st.caption("1X2 + O/U 2.5, 상위 10개 업체 비교, 직전 대비 ▲▼ 표시 (데이터 60초 캐시)")
+st.caption("1X2 + O/U 2.5, 업체별 비교, 직전 대비 ▲▼ + Δ 표시 (데이터 60초 캐시)")
 
-# 자동 새로고침 (화면은 15초마다 리렌더 / 데이터는 60초 TTL)
-auto = st.toggle("Auto refresh", value=True)
+auto = st.toggle("Auto refresh (15s rerun)", value=True)
 if auto:
     st_autorefresh(interval=15_000, key="auto_refresh")
 
-col1, col2, col3 = st.columns([2, 2, 2])
-with col1:
+c1, c2, c3 = st.columns([2, 2, 2])
+with c1:
     team_filter = st.selectbox("팀 필터", ["전체"] + EPL_TEAMS_20, index=0)
-with col2:
-    show_all_bookmakers = st.toggle("Top10 필터 끄기(전체 보기)", value=False)
-with col3:
+with c2:
+    show_all_bookmakers = st.toggle("Top10 말고 전체 북메이커 보기", value=True)
+with c3:
     if st.button("지금 갱신(캐시 무시)"):
         fetch_odds_cached.clear()
-        st.toast("캐시 초기화 완료. 다음 로드에서 새로 받아옵니다.")
-
-# top10 필터 끄면, 그냥 저장할 때부터 전체를 쓰는 게 맞지만
-# MVP에서는 normalize단계에서 top10 필터를 쓰고 있으니,
-# 토글을 켜면 “top10 리스트를 임시로 비움” 방식으로 처리
-if show_all_bookmakers:
-    TOP10_BOOKMAKERS[:] = []  # 비우면 필터가 사실상 해제됨(아래 normalize에서 조건 바꿀 거라서)
-    # 위 줄이 싫으면, 아래 normalize 조건을 if show_all_bookmakers: continue 제거 형태로 바꾸면 됨.
+        st.toast("캐시 초기화 완료.")
 
 res = fetch_odds_cached()
-
 if not res["ok"]:
     st.error(f"API 호출 실패: {res['error']}")
     st.stop()
 
 st.success(f"Fetched (UTC): {res['fetched_utc']} / Events: {len(res['data'])}")
 
-curr_events = normalize_events(res["data"])
+# normalize + delta
+curr_events = normalize_events(res["data"], show_all_bookmakers=show_all_bookmakers)
 
 if "prev_events" not in st.session_state:
     st.session_state.prev_events = {}
@@ -281,68 +346,39 @@ st.session_state.prev_events = copy.deepcopy(curr_events)
 
 events_list = list(events_with_delta.values())
 
+# filter
 if team_filter != "전체":
     tf = team_filter.lower()
     events_list = [e for e in events_list if tf in (e.get("home_team", "").lower()) or tf in (e.get("away_team", "").lower())]
 
 events_list.sort(key=lambda e: e.get("commence_time_utc") or "")
 
-st.markdown("**표시 규칙:** ▲=배당 상승 / ▼=배당 하락 / —=변화 없음 또는 첫 수집")
+st.markdown("**표시 규칙:** <span class='up'>▲</span> 배당 상승 / <span class='down'>▼</span> 배당 하락 / <span class='flat'>—</span> 변화 없음, (Δ) = 직전 대비 변화량",
+            unsafe_allow_html=True)
 
 if not events_list:
     st.info("표시할 경기가 없습니다.")
     st.stop()
 
-
-def market_to_df(market: Dict[str, Any], cols: List[Tuple[str, str]]) -> pd.DataFrame:
-    """
-    cols: [(key,label)]
-    """
-    rows = []
-    for bm_key, bm in market.items():
-        row = {"Bookmaker": bm.get("title") or bm_key}
-        outcomes = bm.get("outcomes", {})
-        for ok, label in cols:
-            o = outcomes.get(ok)
-            if not o or o.get("price") is None:
-                row[label] = "-"
-            else:
-                p = float(o["price"])
-                row[label] = f"{p:.3f} {arrow(o.get('direction'))}"
-        rows.append(row)
-
-    if not rows:
-        return pd.DataFrame()
-    df = pd.DataFrame(rows)
-    return df.sort_values("Bookmaker")
-
-
+# render
 for ev in events_list:
     home = ev.get("home_team")
     away = ev.get("away_team")
     kickoff = fmt_time(ev.get("commence_time_utc"))
 
     st.subheader(f"{home} vs {away}")
-    st.caption(f"Kickoff: {kickoff}")
+    st.markdown(f"<div class='kick'>Kickoff: <span class='mono'>{kickoff}</span></div>", unsafe_allow_html=True)
 
-    cL, cR = st.columns(2)
+    left, right = st.columns(2, gap="large")
 
-    with cL:
+    with left:
         st.write("### 1X2 (승/무/패)")
         h2h_cols = [("HOME", "Home(1)"), ("DRAW", "Draw(X)"), ("AWAY", "Away(2)")]
-        df_h2h = market_to_df(ev["markets"].get("h2h", {}), h2h_cols)
-        if df_h2h.empty:
-            st.info("1X2 데이터 없음")
-        else:
-            st.dataframe(df_h2h, use_container_width=True, hide_index=True)
+        st.markdown(render_market_table_html(ev["markets"].get("h2h", {}), h2h_cols), unsafe_allow_html=True)
 
-    with cR:
+    with right:
         st.write("### O/U 2.5 (언오버)")
         ou_cols = [("OVER_2_5", "Over 2.5"), ("UNDER_2_5", "Under 2.5")]
-        df_ou = market_to_df(ev["markets"].get("totals_2_5", {}), ou_cols)
-        if df_ou.empty:
-            st.info("O/U 2.5 데이터 없음")
-        else:
-            st.dataframe(df_ou, use_container_width=True, hide_index=True)
+        st.markdown(render_market_table_html(ev["markets"].get("totals_2_5", {}), ou_cols), unsafe_allow_html=True)
 
-    st.divider()
+    st.markdown("<div class='hr'></div>", unsafe_allow_html=True)
