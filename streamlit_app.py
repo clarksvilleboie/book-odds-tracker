@@ -22,14 +22,27 @@ if not ODDS_API_KEY:
 SPORT_KEY = "soccer_epl"
 ODDS_URL = f"https://api.the-odds-api.com/v4/sports/{SPORT_KEY}/odds"
 
-REGIONS = "uk,eu"
+# ✅ FanDuel 같은 US 북도 보이게 하려면 us 포함해야 함
+REGIONS = "us,uk,eu"
 ODDS_FORMAT = "decimal"
 MARKETS = "h2h,totals"
 
-TOP10_BOOKMAKERS = [
-    "bet365", "pinnacle", "williamhill", "unibet", "ladbrokes",
-    "paddypower", "betfair", "betvictor", "1xbet", "betsson"
+# ✅ “상위 10개” 우선순위(여기에 pinny/bet365/fanduel 포함)
+# - The Odds API bookmaker key 기준
+PREFERRED_TOP10_ORDER = [
+    "pinnacle",
+    "bet365",
+    "fanduel",
+    "draftkings",
+    "betmgm",
+    "caesars",
+    "pointsbetus",
+    "betrivers",
+    "betfair",
+    "williamhill",
 ]
+
+MAX_BOOKMAKERS = 10
 
 EPL_TEAMS_20 = [
     "Arsenal",
@@ -56,7 +69,7 @@ EPL_TEAMS_20 = [
 
 
 # =========================
-# 1) CSS (라이트 테이블: 가독성 최우선)
+# 1) CSS (라이트 + 왼쪽 배당 / 오른쪽 변화)
 # =========================
 st.markdown("""
 <style>
@@ -64,15 +77,12 @@ st.markdown("""
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
 .kick { color:#64748b; font-size:12px; margin-top:-6px; }
 
-/* 화살표 */
 .up { color:#dc2626; font-weight:900; }     /* 빨강 */
 .down { color:#0284c7; font-weight:900; }   /* 파랑 */
 .flat { color:#64748b; font-weight:700; }
 
-/* 카드/구분 */
 .hr { height:1px; background: #e5e7eb; margin: 16px 0; }
 
-/* 표 (라이트) */
 .tblwrap {
   border:1px solid #e5e7eb;
   border-radius:14px;
@@ -81,15 +91,19 @@ st.markdown("""
 }
 .tbl { width:100%; border-collapse:collapse; }
 .tbl th, .tbl td { padding:9px 10px; border-bottom:1px solid #eef2f7; }
-.tbl th {
-  text-align:left;
-  color:#0f172a;
-  font-size:13px;
-  background: #f8fafc;   /* 연한 헤더 */
-}
+.tbl th { text-align:left; color:#0f172a; font-size:13px; background: #f8fafc; }
 .tbl td { font-size:14px; color:#0f172a; }
-.r { text-align:right; white-space:nowrap; }
 .tbl tr:hover td { background: #f8fafc; }
+
+/* ✅ 셀 안에서: 왼쪽(배당) / 오른쪽(변화) */
+.cellflex {
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  gap:10px;
+}
+.leftval { text-align:left; }
+.rightchg { text-align:right; white-space:nowrap; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -176,7 +190,11 @@ def normalize_totals_2_5(outcomes: list) -> Dict[str, float]:
             m["UNDER_2_5"] = price
     return m
 
-def normalize_events(raw_events: list, show_all_bookmakers: bool) -> Dict[str, Any]:
+def normalize_events(raw_events: list) -> Dict[str, Any]:
+    """
+    이벤트별로 bookmaker 데이터를 모으되,
+    우선순위 리스트(PREFERRED_TOP10_ORDER)에 있는 것만/최대 10개만 쓰도록 준비
+    """
     events = {}
 
     for ev in raw_events:
@@ -193,10 +211,23 @@ def normalize_events(raw_events: list, show_all_bookmakers: bool) -> Dict[str, A
             "markets": {"h2h": {}, "totals_2_5": {}},
         }
 
-        for bm in ev.get("bookmakers", []):
-            bm_key = bm.get("key")
+        # 원본 bookmaker 목록
+        bms = ev.get("bookmakers", []) or []
 
-            if (not show_all_bookmakers) and (bm_key not in TOP10_BOOKMAKERS):
+        # bookmaker key -> bookmaker 객체 맵
+        bm_map = {b.get("key"): b for b in bms if b.get("key")}
+
+        # ✅ 우선순위대로 존재하는 bookmaker만 고르고, 최대 10개
+        selected_keys = [k for k in PREFERRED_TOP10_ORDER if k in bm_map][:MAX_BOOKMAKERS]
+
+        # (만약 위 리스트에서 10개가 안 채워지면, 남는건 알파벳순으로 채움)
+        if len(selected_keys) < MAX_BOOKMAKERS:
+            rest = sorted([k for k in bm_map.keys() if k not in selected_keys])
+            selected_keys += rest[: (MAX_BOOKMAKERS - len(selected_keys))]
+
+        for bm_key in selected_keys:
+            bm = bm_map.get(bm_key)
+            if not bm:
                 continue
 
             bm_title = bm.get("title") or bm_key
@@ -262,57 +293,59 @@ def compute_delta(curr_events: Dict[str, Any], prev_events: Dict[str, Any]) -> D
 
 
 # =========================
-# 5) 렌더 (변화 있을 때만 표시)
+# 5) 셀 렌더: 배당(왼쪽) + 변화(오른쪽)
 # =========================
-def fmt_cell(o: dict) -> str:
+def fmt_cell_left_right(o: dict) -> str:
+    """
+    왼쪽: 배당(항상)
+    오른쪽: 변화 있을 때만 (▲ +0.05 / ▼ -0.02)
+    """
     if not o or o.get("price") is None:
         return "<span class='flat'>-</span>"
 
     price = float(o["price"])
-    base = f"<span class='mono'>{price:.3f}</span>"
+    left = f"<span class='mono leftval'>{price:.3f}</span>"
 
     d = o.get("delta")
     dirn = o.get("direction")
 
-    if d is None or dirn is None:
-        return base
-    if abs(d) < 1e-12:
-        return base
+    # 첫 수집/변화없음 -> 오른쪽 비움
+    if d is None or dirn is None or abs(d) < 1e-12:
+        right = "<span class='flat rightchg'></span>"
+        return f"<div class='cellflex'>{left}{right}</div>"
 
     if dirn == "UP":
-        return base + f" <span class='up'>▲</span> <span class='mono up'>{d:+.2f}</span>"
-    if dirn == "DOWN":
-        return base + f" <span class='down'>▼</span> <span class='mono down'>{d:+.2f}</span>"
+        right = f"<span class='rightchg up'>▲ {d:+.2f}</span>"
+    elif dirn == "DOWN":
+        right = f"<span class='rightchg down'>▼ {d:+.2f}</span>"
+    else:
+        right = "<span class='flat rightchg'></span>"
 
-    return base
-
-def dedup_by_title_keep_latest(bms: List[dict]) -> List[dict]:
-    best = {}
-    for bm in bms:
-        t = (bm.get("title") or bm.get("bookmaker_key") or "").strip()
-        lu = bm.get("last_update_utc") or ""
-        if t not in best or lu > (best[t].get("last_update_utc") or ""):
-            best[t] = bm
-    return list(best.values())
+    return f"<div class='cellflex'>{left}{right}</div>"
 
 def render_market_table_html(market: Dict[str, Any], cols: List[Tuple[str, str]]) -> str:
-    bms = list(market.values())
-    if not bms:
+    """
+    market은 이미 normalize 단계에서 'top10/최대10개'로 들어온 상태
+    PREFERRED_TOP10_ORDER 순서대로 정렬해서 보여줌
+    """
+    if not market:
         return "<div class='small'>데이터 없음</div>"
 
-    bms = dedup_by_title_keep_latest(bms)
-    bms.sort(key=lambda x: (x.get("title") or "").lower())
+    # 정렬: 우선순위 리스트 순서
+    order_index = {k: i for i, k in enumerate(PREFERRED_TOP10_ORDER)}
+    items = list(market.items())
+    items.sort(key=lambda kv: order_index.get(kv[0], 9999))
 
-    ths = "<th>Bookmaker</th>" + "".join([f"<th class='r'>{label}</th>" for _, label in cols])
+    ths = "<th>Bookmaker</th>" + "".join([f"<th>{label}</th>" for _, label in cols])
 
     rows = []
-    for bm in bms:
-        title = bm.get("title") or bm.get("bookmaker_key")
+    for bm_key, bm in items[:MAX_BOOKMAKERS]:
+        title = bm.get("title") or bm_key
         outcomes = bm.get("outcomes") or {}
 
         tds = [f"<td>{title}</td>"]
         for k, _label in cols:
-            tds.append(f"<td class='r'>{fmt_cell(outcomes.get(k))}</td>")
+            tds.append(f"<td>{fmt_cell_left_right(outcomes.get(k))}</td>")
         rows.append("<tr>" + "".join(tds) + "</tr>")
 
     return f"""
@@ -329,18 +362,16 @@ def render_market_table_html(market: Dict[str, Any], cols: List[Tuple[str, str]]
 # 6) UI
 # =========================
 st.title("EPL Odds Tracker")
-st.caption("가독성 버전: 표는 라이트(흰색), 변화 있을 때만 ▲▼ + 변화량 표시 (데이터 60초 캐시)")
+st.caption("Top10 북메이커만 표시 + 배당(왼쪽) / 변화(오른쪽) 레이아웃 (데이터 60초 캐시)")
 
 auto = st.toggle("Auto refresh (15s rerun)", value=True)
 if auto:
     st_autorefresh(interval=15_000, key="auto_refresh")
 
-c1, c2, c3 = st.columns([2, 2, 2])
+c1, c2 = st.columns([2, 1])
 with c1:
     team_filter = st.selectbox("팀 필터", ["전체"] + EPL_TEAMS_20, index=0)
 with c2:
-    show_all_bookmakers = st.toggle("전체 북메이커 보기(추천)", value=True)
-with c3:
     if st.button("지금 갱신(캐시 무시)"):
         fetch_odds_cached.clear()
         st.toast("캐시 초기화 완료.")
@@ -352,7 +383,7 @@ if not res["ok"]:
 
 st.success(f"Fetched (UTC): {res['fetched_utc']} / Events: {len(res['data'])}")
 
-curr_events = normalize_events(res["data"], show_all_bookmakers=show_all_bookmakers)
+curr_events = normalize_events(res["data"])
 
 if "prev_events" not in st.session_state:
     st.session_state.prev_events = {}
@@ -369,8 +400,9 @@ if team_filter != "전체":
 events_list.sort(key=lambda e: e.get("commence_time_utc") or "")
 
 st.markdown(
-    "<div class='small'>표시 규칙: <span class='up'>▲</span> 상승 / <span class='down'>▼</span> 하락. "
-    "변화가 0이면 아무것도 안 붙음. 변화량은 <b>+0.05</b> 형식(2자리).</div>",
+    "<div class='small'>표시 규칙: 오른쪽에만 변화 표시 "
+    "(<span class='up'>▲</span> 상승 / <span class='down'>▼</span> 하락, 0이면 표시 안 함). "
+    "북메이커는 최대 10개만(우선 Pinnacle/Bet365/FanDuel).</div>",
     unsafe_allow_html=True
 )
 
