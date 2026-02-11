@@ -25,7 +25,7 @@ REGIONS = "us,uk,eu"
 ODDS_FORMAT = "decimal"
 MARKETS = "h2h,totals"
 
-# ✅ O/U 기준점 확장
+# ✅ 사진처럼 라인별로 펼치기: 2.5 / 3.0 / 3.5만
 TOTAL_POINTS = [2.5, 3.0, 3.5]
 
 # ✅ 상위 10개(우선 포함: Pinnacle/Bet365/FanDuel)
@@ -68,7 +68,7 @@ EPL_TEAMS_20 = [
 
 
 # =========================
-# 1) CSS (칸 테두리 진하게 + 셀 좌/우 배치 + 배너형 expander)
+# 1) CSS (표/테두리/아코디언)
 # =========================
 st.markdown("""
 <style>
@@ -113,7 +113,7 @@ st.markdown("""
 .leftval{ text-align:left; }
 .rightchg{ text-align:right; white-space:nowrap; }
 
-/* expander(배너) 살짝 깔끔하게 */
+/* 경기 배너 expander */
 div[data-testid="stExpander"] > details {
   border: 1px solid #e2e8f0;
   border-radius: 14px;
@@ -121,11 +121,22 @@ div[data-testid="stExpander"] > details {
 }
 div[data-testid="stExpander"] > details > summary {
   padding: 12px 14px;
-  font-weight: 700;
+  font-weight: 800;
   color: #0f172a;
 }
 div[data-testid="stExpander"] > details > summary:hover {
   background: #f8fafc;
+}
+
+/* O/U 라인 expander(안쪽) */
+.ouwrap div[data-testid="stExpander"] > details {
+  border: 1px solid #dbeafe;
+  border-radius: 12px;
+  background: #ffffff;
+}
+.ouwrap div[data-testid="stExpander"] > details > summary {
+  padding: 10px 12px;
+  font-weight: 800;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -163,9 +174,7 @@ def fmt_time(iso: str) -> str:
         return iso
 
 def point_key(p: float) -> str:
-    # 2.5 -> "2_5", 3.0 -> "3_0"
-    s = f"{p:.1f}".replace(".", "_")
-    return s
+    return f"{p:.1f}".replace(".", "_")  # 2.5 -> 2_5
 
 
 # =========================
@@ -205,10 +214,6 @@ def normalize_h2h(home: str, away: str, outcomes: list) -> Dict[str, float]:
     return m
 
 def normalize_totals_points(outcomes: list, points: List[float]) -> Dict[str, float]:
-    """
-    totals에서 지정한 point들만 가져오기:
-    OVER_2_5 / UNDER_2_5 / OVER_3_0 / UNDER_3_0 / ...
-    """
     want = set(points)
     m = {}
     for o in outcomes:
@@ -270,7 +275,6 @@ def normalize_events(raw_events: list) -> Dict[str, Any]:
                             "last_update_utc": mk_last_update,
                             "outcomes": m,
                         }
-
                 elif mk_key == "totals":
                     m = normalize_totals_points(outcomes, TOTAL_POINTS)
                     if m:
@@ -314,7 +318,7 @@ def compute_delta(curr_events: Dict[str, Any], prev_events: Dict[str, Any]) -> D
 
 
 # =========================
-# 5) 셀 렌더: 배당(왼쪽) + 변화(오른쪽)
+# 5) 렌더
 # =========================
 def fmt_cell_left_right(o: dict) -> str:
     if not o or o.get("price") is None:
@@ -368,12 +372,31 @@ def render_market_table_html(market: Dict[str, Any], cols: List[Tuple[str, str]]
     </div>
     """
 
+def build_totals_market_for_point(ev_markets_totals: Dict[str, Any], p: float) -> Dict[str, Any]:
+    """
+    totals_multi(북메이커 전체 outcomes)에서 특정 point(2.5/3.0/3.5)만 남긴 market dict를 새로 만든다
+    -> expander 하나당 표 하나 렌더
+    """
+    pk = point_key(p)
+    need_keys = {f"OVER_{pk}", f"UNDER_{pk}"}
+
+    out_market = {}
+    for bm_key, bm in ev_markets_totals.items():
+        new_bm = copy.deepcopy(bm)
+        outs = new_bm.get("outcomes") or {}
+        filtered = {k: v for k, v in outs.items() if k in need_keys}
+        if filtered:
+            new_bm["outcomes"] = filtered
+            out_market[bm_key] = new_bm
+
+    return out_market
+
 
 # =========================
-# 6) UI (배너만 보이고 클릭해서 펼침)
+# 6) UI
 # =========================
 st.title("EPL Odds Tracker")
-st.caption("배너 클릭 펼침 + O/U 2.5 / 3.0 / 3.5 + Top10 북메이커 (수동 갱신)")
+st.caption("사진 느낌: O/U 라인(2.5 / 3.0 / 3.5) 눌러서 펼치면 북메이커 배당 주르륵 (수동 갱신)")
 
 c1, c2 = st.columns([2, 1])
 with c1:
@@ -415,19 +438,11 @@ if not events_list:
     st.info("표시할 경기가 없습니다.")
     st.stop()
 
-# O/U 컬럼(2.5/3.0/3.5)
-ou_cols = []
-for p in TOTAL_POINTS:
-    pk = point_key(p)
-    ou_cols.append((f"OVER_{pk}", f"Over {p:g}"))
-    ou_cols.append((f"UNDER_{pk}", f"Under {p:g}"))
-
 for ev in events_list:
     home = ev.get("home_team")
     away = ev.get("away_team")
     kickoff = fmt_time(ev.get("commence_time_utc"))
 
-    # ✅ 배너(접힌 상태)만 보임 → 클릭하면 펼침
     with st.expander(f"{home} vs {away}  |  Kickoff: {kickoff}", expanded=False):
         left, right = st.columns(2, gap="large")
 
@@ -437,5 +452,18 @@ for ev in events_list:
             st.markdown(render_market_table_html(ev["markets"].get("h2h", {}), h2h_cols), unsafe_allow_html=True)
 
         with right:
-            st.write("### O/U (언오버) — 2.5 / 3.0 / 3.5")
-            st.markdown(render_market_table_html(ev["markets"].get("totals_multi", {}), ou_cols), unsafe_allow_html=True)
+            st.write("### O/U (언오버) — 라인 눌러서 펼치기")
+
+            st.markdown("<div class='ouwrap'>", unsafe_allow_html=True)
+
+            totals_all = ev["markets"].get("totals_multi", {})
+
+            for p in TOTAL_POINTS:
+                # 라인별 market 구성
+                m_point = build_totals_market_for_point(totals_all, p)
+                cols = [(f"OVER_{point_key(p)}", f"Over {p:g}"), (f"UNDER_{point_key(p)}", f"Under {p:g}")]
+
+                with st.expander(f"Over/Under +{p:g}", expanded=False):
+                    st.markdown(render_market_table_html(m_point, cols), unsafe_allow_html=True)
+
+            st.markdown("</div>", unsafe_allow_html=True)
