@@ -22,13 +22,10 @@ if not ODDS_API_KEY:
 SPORT_KEY = "soccer_epl"
 ODDS_URL = f"https://api.the-odds-api.com/v4/sports/{SPORT_KEY}/odds"
 
-# ✅ FanDuel 같은 US 북도 보이게 하려면 us 포함해야 함
 REGIONS = "us,uk,eu"
 ODDS_FORMAT = "decimal"
 MARKETS = "h2h,totals"
 
-# ✅ “상위 10개” 우선순위(여기에 pinny/bet365/fanduel 포함)
-# - The Odds API bookmaker key 기준
 PREFERRED_TOP10_ORDER = [
     "pinnacle",
     "bet365",
@@ -41,7 +38,6 @@ PREFERRED_TOP10_ORDER = [
     "betfair",
     "williamhill",
 ]
-
 MAX_BOOKMAKERS = 10
 
 EPL_TEAMS_20 = [
@@ -69,7 +65,7 @@ EPL_TEAMS_20 = [
 
 
 # =========================
-# 1) CSS (라이트 + 왼쪽 배당 / 오른쪽 변화)
+# 1) CSS (칸 테두리 진하게)
 # =========================
 st.markdown("""
 <style>
@@ -77,33 +73,49 @@ st.markdown("""
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
 .kick { color:#64748b; font-size:12px; margin-top:-6px; }
 
-.up { color:#dc2626; font-weight:900; }     /* 빨강 */
-.down { color:#0284c7; font-weight:900; }   /* 파랑 */
+.up { color:#dc2626; font-weight:900; }
+.down { color:#0284c7; font-weight:900; }
 .flat { color:#64748b; font-weight:700; }
 
 .hr { height:1px; background: #e5e7eb; margin: 16px 0; }
 
-.tblwrap {
-  border:1px solid #e5e7eb;
+/* ✅ 테이블 외곽 + 셀 테두리 더 진하게 */
+.tblwrap{
+  border:1.5px solid #cbd5e1;   /* 밖 테두리 진하게 */
   border-radius:14px;
   overflow:hidden;
-  background: #ffffff;
+  background:#fff;
+  box-shadow: 0 1px 0 rgba(15,23,42,0.04);
 }
-.tbl { width:100%; border-collapse:collapse; }
-.tbl th, .tbl td { padding:9px 10px; border-bottom:1px solid #eef2f7; }
-.tbl th { text-align:left; color:#0f172a; font-size:13px; background: #f8fafc; }
-.tbl td { font-size:14px; color:#0f172a; }
-.tbl tr:hover td { background: #f8fafc; }
+.tbl{ width:100%; border-collapse:collapse; }
 
-/* ✅ 셀 안에서: 왼쪽(배당) / 오른쪽(변화) */
-.cellflex {
+/* ✅ 셀 테두리 (가독성 핵심) */
+.tbl th, .tbl td{
+  padding:9px 10px;
+  border-bottom:1.25px solid #cbd5e1;   /* 아래줄 진하게 */
+  border-right:1.0px solid #e2e8f0;     /* 세로줄도 살짝 */
+}
+.tbl th:last-child, .tbl td:last-child{ border-right:none; }
+
+.tbl th{
+  text-align:left;
+  color:#0f172a;
+  font-size:13px;
+  background:#f1f5f9;                  /* 헤더 더 또렷하게 */
+  border-bottom:1.5px solid #94a3b8;   /* 헤더 아래 더 진하게 */
+}
+.tbl td{ font-size:14px; color:#0f172a; }
+.tbl tr:hover td{ background:#f8fafc; }
+
+/* ✅ 셀 안: 왼쪽(배당) / 오른쪽(변화) */
+.cellflex{
   display:flex;
   justify-content:space-between;
   align-items:center;
   gap:10px;
 }
-.leftval { text-align:left; }
-.rightchg { text-align:right; white-space:nowrap; }
+.leftval{ text-align:left; }
+.rightchg{ text-align:right; white-space:nowrap; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -191,12 +203,7 @@ def normalize_totals_2_5(outcomes: list) -> Dict[str, float]:
     return m
 
 def normalize_events(raw_events: list) -> Dict[str, Any]:
-    """
-    이벤트별로 bookmaker 데이터를 모으되,
-    우선순위 리스트(PREFERRED_TOP10_ORDER)에 있는 것만/최대 10개만 쓰도록 준비
-    """
     events = {}
-
     for ev in raw_events:
         event_id = ev.get("id")
         home = ev.get("home_team")
@@ -211,16 +218,10 @@ def normalize_events(raw_events: list) -> Dict[str, Any]:
             "markets": {"h2h": {}, "totals_2_5": {}},
         }
 
-        # 원본 bookmaker 목록
         bms = ev.get("bookmakers", []) or []
-
-        # bookmaker key -> bookmaker 객체 맵
         bm_map = {b.get("key"): b for b in bms if b.get("key")}
 
-        # ✅ 우선순위대로 존재하는 bookmaker만 고르고, 최대 10개
         selected_keys = [k for k in PREFERRED_TOP10_ORDER if k in bm_map][:MAX_BOOKMAKERS]
-
-        # (만약 위 리스트에서 10개가 안 채워지면, 남는건 알파벳순으로 채움)
         if len(selected_keys) < MAX_BOOKMAKERS:
             rest = sorted([k for k in bm_map.keys() if k not in selected_keys])
             selected_keys += rest[: (MAX_BOOKMAKERS - len(selected_keys))]
@@ -247,7 +248,6 @@ def normalize_events(raw_events: list) -> Dict[str, Any]:
                             "last_update_utc": mk_last_update,
                             "outcomes": m,
                         }
-
                 elif mk_key == "totals":
                     m = normalize_totals_2_5(outcomes)
                     if m:
@@ -296,10 +296,6 @@ def compute_delta(curr_events: Dict[str, Any], prev_events: Dict[str, Any]) -> D
 # 5) 셀 렌더: 배당(왼쪽) + 변화(오른쪽)
 # =========================
 def fmt_cell_left_right(o: dict) -> str:
-    """
-    왼쪽: 배당(항상)
-    오른쪽: 변화 있을 때만 (▲ +0.05 / ▼ -0.02)
-    """
     if not o or o.get("price") is None:
         return "<span class='flat'>-</span>"
 
@@ -309,7 +305,6 @@ def fmt_cell_left_right(o: dict) -> str:
     d = o.get("delta")
     dirn = o.get("direction")
 
-    # 첫 수집/변화없음 -> 오른쪽 비움
     if d is None or dirn is None or abs(d) < 1e-12:
         right = "<span class='flat rightchg'></span>"
         return f"<div class='cellflex'>{left}{right}</div>"
@@ -324,14 +319,9 @@ def fmt_cell_left_right(o: dict) -> str:
     return f"<div class='cellflex'>{left}{right}</div>"
 
 def render_market_table_html(market: Dict[str, Any], cols: List[Tuple[str, str]]) -> str:
-    """
-    market은 이미 normalize 단계에서 'top10/최대10개'로 들어온 상태
-    PREFERRED_TOP10_ORDER 순서대로 정렬해서 보여줌
-    """
     if not market:
         return "<div class='small'>데이터 없음</div>"
 
-    # 정렬: 우선순위 리스트 순서
     order_index = {k: i for i, k in enumerate(PREFERRED_TOP10_ORDER)}
     items = list(market.items())
     items.sort(key=lambda kv: order_index.get(kv[0], 9999))
@@ -362,7 +352,7 @@ def render_market_table_html(market: Dict[str, Any], cols: List[Tuple[str, str]]
 # 6) UI
 # =========================
 st.title("EPL Odds Tracker")
-st.caption("Top10 북메이커만 표시 + 배당(왼쪽) / 변화(오른쪽) 레이아웃 (데이터 60초 캐시)")
+st.caption("Top10 북메이커 + 칸 테두리 강화(가독성) + 배당 왼쪽/변화 오른쪽 (60초 캐시)")
 
 auto = st.toggle("Auto refresh (15s rerun)", value=True)
 if auto:
@@ -400,9 +390,7 @@ if team_filter != "전체":
 events_list.sort(key=lambda e: e.get("commence_time_utc") or "")
 
 st.markdown(
-    "<div class='small'>표시 규칙: 오른쪽에만 변화 표시 "
-    "(<span class='up'>▲</span> 상승 / <span class='down'>▼</span> 하락, 0이면 표시 안 함). "
-    "북메이커는 최대 10개만(우선 Pinnacle/Bet365/FanDuel).</div>",
+    "<div class='small'>표시 규칙: 셀 왼쪽=배당, 셀 오른쪽=변화(▲/▼ + 변화량). 0이면 변화 표시 안 함.</div>",
     unsafe_allow_html=True
 )
 
