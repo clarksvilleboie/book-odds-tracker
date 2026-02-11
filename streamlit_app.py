@@ -5,7 +5,6 @@ from typing import Dict, Any, Optional, List, Tuple
 
 import httpx
 import streamlit as st
-from streamlit_autorefresh import st_autorefresh
 
 
 # =========================
@@ -65,7 +64,7 @@ EPL_TEAMS_20 = [
 
 
 # =========================
-# 1) CSS (칸 테두리 진하게)
+# 1) CSS (칸 테두리 진하게 + 배당 왼쪽 / 변화 오른쪽)
 # =========================
 st.markdown("""
 <style>
@@ -79,35 +78,32 @@ st.markdown("""
 
 .hr { height:1px; background: #e5e7eb; margin: 16px 0; }
 
-/* ✅ 테이블 외곽 + 셀 테두리 더 진하게 */
+/* 테이블 외곽 + 셀 테두리 */
 .tblwrap{
-  border:1.5px solid #cbd5e1;   /* 밖 테두리 진하게 */
+  border:1.5px solid #cbd5e1;
   border-radius:14px;
   overflow:hidden;
   background:#fff;
   box-shadow: 0 1px 0 rgba(15,23,42,0.04);
 }
 .tbl{ width:100%; border-collapse:collapse; }
-
-/* ✅ 셀 테두리 (가독성 핵심) */
 .tbl th, .tbl td{
   padding:9px 10px;
-  border-bottom:1.25px solid #cbd5e1;   /* 아래줄 진하게 */
-  border-right:1.0px solid #e2e8f0;     /* 세로줄도 살짝 */
+  border-bottom:1.25px solid #cbd5e1;
+  border-right:1.0px solid #e2e8f0;
 }
 .tbl th:last-child, .tbl td:last-child{ border-right:none; }
-
 .tbl th{
   text-align:left;
   color:#0f172a;
   font-size:13px;
-  background:#f1f5f9;                  /* 헤더 더 또렷하게 */
-  border-bottom:1.5px solid #94a3b8;   /* 헤더 아래 더 진하게 */
+  background:#f1f5f9;
+  border-bottom:1.5px solid #94a3b8;
 }
 .tbl td{ font-size:14px; color:#0f172a; }
 .tbl tr:hover td{ background:#f8fafc; }
 
-/* ✅ 셀 안: 왼쪽(배당) / 오른쪽(변화) */
+/* 셀 안: 왼쪽(배당) / 오른쪽(변화) */
 .cellflex{
   display:flex;
   justify-content:space-between;
@@ -349,22 +345,18 @@ def render_market_table_html(market: Dict[str, Any], cols: List[Tuple[str, str]]
 
 
 # =========================
-# 6) UI
+# 6) UI (자동갱신 제거 / 수동 갱신만)
 # =========================
 st.title("EPL Odds Tracker")
-st.caption("Top10 북메이커 + 칸 테두리 강화(가독성) + 배당 왼쪽/변화 오른쪽 (60초 캐시)")
-
-auto = st.toggle("Auto refresh (15s rerun)", value=True)
-if auto:
-    st_autorefresh(interval=15_000, key="auto_refresh")
+st.caption("초기 버전: 자동 갱신 OFF. 필요할 때만 버튼으로 갱신.")
 
 c1, c2 = st.columns([2, 1])
 with c1:
     team_filter = st.selectbox("팀 필터", ["전체"] + EPL_TEAMS_20, index=0)
 with c2:
-    if st.button("지금 갱신(캐시 무시)"):
+    if st.button("갱신 (API 다시 호출 / 캐시 무시)"):
         fetch_odds_cached.clear()
-        st.toast("캐시 초기화 완료.")
+        st.toast("캐시 초기화 완료. 새 데이터로 갱신합니다.")
 
 res = fetch_odds_cached()
 if not res["ok"]:
