@@ -25,6 +25,10 @@ REGIONS = "us,uk,eu"
 ODDS_FORMAT = "decimal"
 MARKETS = "h2h,totals"
 
+# ✅ O/U 기준점 확장
+TOTAL_POINTS = [2.5, 3.0, 3.5]
+
+# ✅ 상위 10개(우선 포함: Pinnacle/Bet365/FanDuel)
 PREFERRED_TOP10_ORDER = [
     "pinnacle",
     "bet365",
@@ -64,21 +68,17 @@ EPL_TEAMS_20 = [
 
 
 # =========================
-# 1) CSS (칸 테두리 진하게 + 배당 왼쪽 / 변화 오른쪽)
+# 1) CSS (칸 테두리 진하게 + 셀 좌/우 배치 + 배너형 expander)
 # =========================
 st.markdown("""
 <style>
 .small { font-size: 12px; color:#64748b; }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
-.kick { color:#64748b; font-size:12px; margin-top:-6px; }
-
 .up { color:#dc2626; font-weight:900; }
 .down { color:#0284c7; font-weight:900; }
 .flat { color:#64748b; font-weight:700; }
 
-.hr { height:1px; background: #e5e7eb; margin: 16px 0; }
-
-/* 테이블 외곽 + 셀 테두리 */
+/* 테이블 */
 .tblwrap{
   border:1.5px solid #cbd5e1;
   border-radius:14px;
@@ -112,6 +112,21 @@ st.markdown("""
 }
 .leftval{ text-align:left; }
 .rightchg{ text-align:right; white-space:nowrap; }
+
+/* expander(배너) 살짝 깔끔하게 */
+div[data-testid="stExpander"] > details {
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  background: #ffffff;
+}
+div[data-testid="stExpander"] > details > summary {
+  padding: 12px 14px;
+  font-weight: 700;
+  color: #0f172a;
+}
+div[data-testid="stExpander"] > details > summary:hover {
+  background: #f8fafc;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -146,6 +161,11 @@ def fmt_time(iso: str) -> str:
         return d.astimezone().strftime("%Y-%m-%d %H:%M")
     except Exception:
         return iso
+
+def point_key(p: float) -> str:
+    # 2.5 -> "2_5", 3.0 -> "3_0"
+    s = f"{p:.1f}".replace(".", "_")
+    return s
 
 
 # =========================
@@ -184,18 +204,24 @@ def normalize_h2h(home: str, away: str, outcomes: list) -> Dict[str, float]:
             m["DRAW"] = price
     return m
 
-def normalize_totals_2_5(outcomes: list) -> Dict[str, float]:
+def normalize_totals_points(outcomes: list, points: List[float]) -> Dict[str, float]:
+    """
+    totals에서 지정한 point들만 가져오기:
+    OVER_2_5 / UNDER_2_5 / OVER_3_0 / UNDER_3_0 / ...
+    """
+    want = set(points)
     m = {}
     for o in outcomes:
-        point = safe_float(o.get("point"))
-        if point != 2.5:
+        p = safe_float(o.get("point"))
+        if p is None or p not in want:
             continue
         name = str(o.get("name", "")).lower()
         price = safe_float(o.get("price"))
+        pk = point_key(p)
         if name == "over":
-            m["OVER_2_5"] = price
+            m[f"OVER_{pk}"] = price
         elif name == "under":
-            m["UNDER_2_5"] = price
+            m[f"UNDER_{pk}"] = price
     return m
 
 def normalize_events(raw_events: list) -> Dict[str, Any]:
@@ -211,7 +237,7 @@ def normalize_events(raw_events: list) -> Dict[str, Any]:
             "home_team": home,
             "away_team": away,
             "commence_time_utc": commence,
-            "markets": {"h2h": {}, "totals_2_5": {}},
+            "markets": {"h2h": {}, "totals_multi": {}},
         }
 
         bms = ev.get("bookmakers", []) or []
@@ -244,10 +270,11 @@ def normalize_events(raw_events: list) -> Dict[str, Any]:
                             "last_update_utc": mk_last_update,
                             "outcomes": m,
                         }
+
                 elif mk_key == "totals":
-                    m = normalize_totals_2_5(outcomes)
+                    m = normalize_totals_points(outcomes, TOTAL_POINTS)
                     if m:
-                        out["markets"]["totals_2_5"][bm_key] = {
+                        out["markets"]["totals_multi"][bm_key] = {
                             "bookmaker_key": bm_key,
                             "title": bm_title,
                             "last_update_utc": mk_last_update,
@@ -255,14 +282,13 @@ def normalize_events(raw_events: list) -> Dict[str, Any]:
                         }
 
         events[event_id] = out
-
     return events
 
 def compute_delta(curr_events: Dict[str, Any], prev_events: Dict[str, Any]) -> Dict[str, Any]:
     out_events = copy.deepcopy(curr_events)
 
     for event_id, ev in out_events.items():
-        for market_key in ["h2h", "totals_2_5"]:
+        for market_key in ["h2h", "totals_multi"]:
             market = ev["markets"].get(market_key, {})
             for bm_key, bm in market.items():
                 curr_outcomes = bm.get("outcomes", {})
@@ -284,7 +310,6 @@ def compute_delta(curr_events: Dict[str, Any], prev_events: Dict[str, Any]) -> D
                     }
 
                 bm["outcomes"] = new_outcomes
-
     return out_events
 
 
@@ -345,10 +370,10 @@ def render_market_table_html(market: Dict[str, Any], cols: List[Tuple[str, str]]
 
 
 # =========================
-# 6) UI (자동갱신 제거 / 수동 갱신만)
+# 6) UI (배너만 보이고 클릭해서 펼침)
 # =========================
 st.title("EPL Odds Tracker")
-st.caption("초기 버전: 자동 갱신 OFF. 필요할 때만 버튼으로 갱신.")
+st.caption("배너 클릭 펼침 + O/U 2.5 / 3.0 / 3.5 + Top10 북메이커 (수동 갱신)")
 
 c1, c2 = st.columns([2, 1])
 with c1:
@@ -390,24 +415,27 @@ if not events_list:
     st.info("표시할 경기가 없습니다.")
     st.stop()
 
+# O/U 컬럼(2.5/3.0/3.5)
+ou_cols = []
+for p in TOTAL_POINTS:
+    pk = point_key(p)
+    ou_cols.append((f"OVER_{pk}", f"Over {p:g}"))
+    ou_cols.append((f"UNDER_{pk}", f"Under {p:g}"))
+
 for ev in events_list:
     home = ev.get("home_team")
     away = ev.get("away_team")
     kickoff = fmt_time(ev.get("commence_time_utc"))
 
-    st.subheader(f"{home} vs {away}")
-    st.markdown(f"<div class='kick'>Kickoff: <span class='mono'>{kickoff}</span></div>", unsafe_allow_html=True)
+    # ✅ 배너(접힌 상태)만 보임 → 클릭하면 펼침
+    with st.expander(f"{home} vs {away}  |  Kickoff: {kickoff}", expanded=False):
+        left, right = st.columns(2, gap="large")
 
-    left, right = st.columns(2, gap="large")
+        with left:
+            st.write("### 1X2 (승/무/패)")
+            h2h_cols = [("HOME", "Home(1)"), ("DRAW", "Draw(X)"), ("AWAY", "Away(2)")]
+            st.markdown(render_market_table_html(ev["markets"].get("h2h", {}), h2h_cols), unsafe_allow_html=True)
 
-    with left:
-        st.write("### 1X2 (승/무/패)")
-        h2h_cols = [("HOME", "Home(1)"), ("DRAW", "Draw(X)"), ("AWAY", "Away(2)")]
-        st.markdown(render_market_table_html(ev["markets"].get("h2h", {}), h2h_cols), unsafe_allow_html=True)
-
-    with right:
-        st.write("### O/U 2.5 (언오버)")
-        ou_cols = [("OVER_2_5", "Over 2.5"), ("UNDER_2_5", "Under 2.5")]
-        st.markdown(render_market_table_html(ev["markets"].get("totals_2_5", {}), ou_cols), unsafe_allow_html=True)
-
-    st.markdown("<div class='hr'></div>", unsafe_allow_html=True)
+        with right:
+            st.write("### O/U (언오버) — 2.5 / 3.0 / 3.5")
+            st.markdown(render_market_table_html(ev["markets"].get("totals_multi", {}), ou_cols), unsafe_allow_html=True)
