@@ -26,7 +26,6 @@ REGIONS = "uk,eu"
 ODDS_FORMAT = "decimal"
 MARKETS = "h2h,totals"
 
-# Top10 후보 (응답에 없으면 안 뜰 수 있음)
 TOP10_BOOKMAKERS = [
     "bet365", "pinnacle", "williamhill", "unibet", "ladbrokes",
     "paddypower", "betfair", "betvictor", "1xbet", "betsson"
@@ -57,31 +56,40 @@ EPL_TEAMS_20 = [
 
 
 # =========================
-# 1) CSS (깔끔 버전)
+# 1) CSS (라이트 테이블: 가독성 최우선)
 # =========================
 st.markdown("""
 <style>
-/* 전체 */
-.small { font-size: 12px; color:#94a3b8; }
+.small { font-size: 12px; color:#64748b; }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
-.kick { color:#94a3b8; font-size:12px; margin-top:-6px; }
+.kick { color:#64748b; font-size:12px; margin-top:-6px; }
 
 /* 화살표 */
-.up { color:#fb7185; font-weight:900; }     /* 더 선명한 빨강 */
-.down { color:#38bdf8; font-weight:900; }   /* 선명한 파랑 */
-.flat { color:#94a3b8; font-weight:700; }
+.up { color:#dc2626; font-weight:900; }     /* 빨강 */
+.down { color:#0284c7; font-weight:900; }   /* 파랑 */
+.flat { color:#64748b; font-weight:700; }
 
-/* 표 */
-.tblwrap { border:1px solid rgba(148,163,184,0.20); border-radius:14px; overflow:hidden; background: rgba(15,23,42,0.55); }
+/* 카드/구분 */
+.hr { height:1px; background: #e5e7eb; margin: 16px 0; }
+
+/* 표 (라이트) */
+.tblwrap {
+  border:1px solid #e5e7eb;
+  border-radius:14px;
+  overflow:hidden;
+  background: #ffffff;
+}
 .tbl { width:100%; border-collapse:collapse; }
-.tbl th, .tbl td { padding:8px 10px; border-bottom:1px solid rgba(148,163,184,0.16); }
-.tbl th { text-align:left; color:#e2e8f0; font-size:13px; background: rgba(2,6,23,0.60); }
-.tbl td { font-size:14px; }
+.tbl th, .tbl td { padding:9px 10px; border-bottom:1px solid #eef2f7; }
+.tbl th {
+  text-align:left;
+  color:#0f172a;
+  font-size:13px;
+  background: #f8fafc;   /* 연한 헤더 */
+}
+.tbl td { font-size:14px; color:#0f172a; }
 .r { text-align:right; white-space:nowrap; }
-.tbl tr:hover td { background: rgba(30,41,59,0.35); }
-
-/* 섹션 구분 */
-.hr { height:1px; background: rgba(148,163,184,0.18); margin: 16px 0; }
+.tbl tr:hover td { background: #f8fafc; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -254,7 +262,7 @@ def compute_delta(curr_events: Dict[str, Any], prev_events: Dict[str, Any]) -> D
 
 
 # =========================
-# 5) 테이블 렌더 (깔끔 표기: 변화 있을 때만 화살표+Δ)
+# 5) 렌더 (변화 있을 때만 표시)
 # =========================
 def fmt_cell(o: dict) -> str:
     if not o or o.get("price") is None:
@@ -266,15 +274,11 @@ def fmt_cell(o: dict) -> str:
     d = o.get("delta")
     dirn = o.get("direction")
 
-    # 첫 수집/정보 없음 -> 가격만
     if d is None or dirn is None:
         return base
-
-    # 변화 0 -> 가격만 (노이즈 제거)
     if abs(d) < 1e-12:
         return base
 
-    # 변화 있을 때만: ▲ +0.05 / ▼ -0.02 (2자리)
     if dirn == "UP":
         return base + f" <span class='up'>▲</span> <span class='mono up'>{d:+.2f}</span>"
     if dirn == "DOWN":
@@ -283,9 +287,6 @@ def fmt_cell(o: dict) -> str:
     return base
 
 def dedup_by_title_keep_latest(bms: List[dict]) -> List[dict]:
-    """
-    같은 title(브랜드) 중복이 있으면 last_update_utc 최신 1개만 남김
-    """
     best = {}
     for bm in bms:
         t = (bm.get("title") or bm.get("bookmaker_key") or "").strip()
@@ -299,10 +300,7 @@ def render_market_table_html(market: Dict[str, Any], cols: List[Tuple[str, str]]
     if not bms:
         return "<div class='small'>데이터 없음</div>"
 
-    # 중복 제거(브랜드 기준)
     bms = dedup_by_title_keep_latest(bms)
-
-    # 정렬
     bms.sort(key=lambda x: (x.get("title") or "").lower())
 
     ths = "<th>Bookmaker</th>" + "".join([f"<th class='r'>{label}</th>" for _, label in cols])
@@ -331,7 +329,7 @@ def render_market_table_html(market: Dict[str, Any], cols: List[Tuple[str, str]]
 # 6) UI
 # =========================
 st.title("EPL Odds Tracker")
-st.caption("1X2 + O/U 2.5, 직전 대비 변화 표시 (데이터 60초 캐시)")
+st.caption("가독성 버전: 표는 라이트(흰색), 변화 있을 때만 ▲▼ + 변화량 표시 (데이터 60초 캐시)")
 
 auto = st.toggle("Auto refresh (15s rerun)", value=True)
 if auto:
@@ -354,7 +352,6 @@ if not res["ok"]:
 
 st.success(f"Fetched (UTC): {res['fetched_utc']} / Events: {len(res['data'])}")
 
-# normalize + delta
 curr_events = normalize_events(res["data"], show_all_bookmakers=show_all_bookmakers)
 
 if "prev_events" not in st.session_state:
@@ -365,17 +362,15 @@ st.session_state.prev_events = copy.deepcopy(curr_events)
 
 events_list = list(events_with_delta.values())
 
-# filter
 if team_filter != "전체":
     tf = team_filter.lower()
     events_list = [e for e in events_list if tf in (e.get("home_team", "").lower()) or tf in (e.get("away_team", "").lower())]
 
-# sort
 events_list.sort(key=lambda e: e.get("commence_time_utc") or "")
 
 st.markdown(
-    "<div class='small'>표시 규칙: <span class='up'>▲</span> 배당 상승 / <span class='down'>▼</span> 배당 하락 / "
-    "<span class='flat'>—</span> 변화 없음(표시 안 함), 변화량은 0이 아닐 때만 <b>+0.05</b> 형식으로 표시</div>",
+    "<div class='small'>표시 규칙: <span class='up'>▲</span> 상승 / <span class='down'>▼</span> 하락. "
+    "변화가 0이면 아무것도 안 붙음. 변화량은 <b>+0.05</b> 형식(2자리).</div>",
     unsafe_allow_html=True
 )
 
